@@ -1,0 +1,51 @@
+# Python
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Secrets
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+
+# Local data / documents / generated files
+data/
+
+# Vector databases / indexes
+chroma/
+chromadb/
+vectorstore/
+indexes/
+*.db
+*.sqlite
+*.sqlite3
+
+# Downloaded models / checkpoints
+models/
+checkpoints/
+*.bin
+*.pt
+*.pth
+*.safetensors
+
+# Temporary files
+*.tmp
+*.temp
+*.cache
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
