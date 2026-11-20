@@ -1,11 +1,19 @@
+"""Retrieve the most relevant chunks for a query."""
+
+
 class Retriever:
 
     def __init__(
         self,
         vector_store,
         embedding_model,
-        reranker
+        reranker=None
     ):
+        """
+        reranker is optional. Without it, results come
+        straight from the vector store ordered by
+        embedding distance.
+        """
 
         self.vector_store = vector_store
         self.embedding_model = embedding_model
@@ -31,10 +39,16 @@ class Retriever:
             )
         )
 
-        documents = self.reranker.rerank(
-            query,
-            documents,
-            top_k=top_k
-        )
+        if self.reranker is not None:
+
+            documents = self.reranker.rerank(
+                query,
+                documents,
+                top_k=top_k
+            )
+
+        else:
+
+            documents = documents[:top_k]
 
         return documents

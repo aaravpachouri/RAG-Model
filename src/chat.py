@@ -1,8 +1,14 @@
-from embeddings import EmbeddingModel
-from vectorstore import VectorStore
-from retriever import Retriever
-from reranker import Reranker
-from generator import Generator
+"""Interactive chat over the already-ingested documents.
+
+Kept for convenience; equivalent to `python src/main.py chat`.
+"""
+
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from main import build_qa_stack, run_chat
 
 
 def main():
@@ -13,81 +19,18 @@ def main():
 
     print("\nLoading AI components...")
 
-    embedding_model = EmbeddingModel()
-
-    vector_store = VectorStore()
-
-    reranker = Reranker()
-
-    retriever = Retriever(
-        vector_store,
-        embedding_model,
-        reranker
+    retriever, vector_store, generator = (
+        build_qa_stack()
     )
 
-    generator = Generator()
-
-    print("\nRAG system ready.")
-    print("Type 'exit' to quit.\n")
-
-    while True:
-
-        question = input("You: ").strip()
-
-        if not question:
-            continue
-
-        if question.lower() in [
-            "exit",
-            "quit"
-        ]:
-
-            print(
-                "\nGoodbye!"
-            )
-
-            break
-
+    if vector_store.count() == 0:
         print(
-            "\nSearching documents..."
+            "\nThe vector store is empty. Run "
+            "`python src/main.py ingest` first."
         )
+        return
 
-        documents = retriever.retrieve(
-            question,
-            n_results=8,
-            top_k=4
-        )
-
-        if not documents:
-
-            print(
-                "\nNo relevant information "
-                "was found.\n"
-            )
-
-            continue
-
-        print(
-            f"Retrieved {len(documents)} "
-            f"relevant chunks."
-        )
-
-        print(
-            "\nGenerating answer..."
-        )
-
-        answer = generator.generate(
-            question,
-            documents
-        )
-
-        print(
-            "\nAI:\n"
-        )
-
-        print(answer)
-
-        print("\n" + "-" * 50)
+    run_chat(retriever, generator)
 
 
 if __name__ == "__main__":

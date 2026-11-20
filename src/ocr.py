@@ -1,5 +1,14 @@
+"""Optional Tesseract-based OCR helpers.
+
+Used by the experimental scripts in experiments/.
+The main pipeline prefers normal PDF text extraction
+and (optionally) the vision model; Tesseract is a
+fallback for image-only pages.
+"""
+
 import io
-import re
+import os
+import shutil
 
 import pymupdf
 import pytesseract
@@ -7,11 +16,29 @@ import pytesseract
 from PIL import Image, ImageEnhance, ImageFilter
 
 
-TESSERACT_PATH = (
-    r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-)
+def _configure_tesseract():
+    """Locate the Tesseract binary without hardcoding a path."""
 
-pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
+    cmd = os.environ.get("TESSERACT_CMD")
+
+    if not cmd:
+        cmd = shutil.which("tesseract")
+
+    if not cmd:
+        default_windows = (
+            r"C:\Program Files\Tesseract-OCR"
+            r"\tesseract.exe"
+        )
+        if os.path.exists(default_windows):
+            cmd = default_windows
+
+    if cmd:
+        pytesseract.pytesseract.tesseract_cmd = cmd
+
+    return cmd
+
+
+TESSERACT_CMD = _configure_tesseract()
 
 
 def render_page(page, scale=4):
@@ -54,6 +81,13 @@ def preprocess_image(image):
 
 
 def run_ocr(image, psm=6):
+
+    if not TESSERACT_CMD:
+        raise RuntimeError(
+            "Tesseract is not installed. Install it "
+            "or set the TESSERACT_CMD environment "
+            "variable."
+        )
 
     return pytesseract.image_to_string(
         image,

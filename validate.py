@@ -1,313 +1,361 @@
-"""Validation workflow for the RAG system - tests all components end-to-end."""
+"""Validation workflow for the RAG system - checks all components.
+
+Uses an in-memory vector store, so it never touches the real index
+under data/chroma. The generation check needs a running Ollama server
+and is reported as SKIP when Ollama is not available.
+
+Run from the project root:
+    python validate.py
+"""
 
 import sys
 import time
 from pathlib import Path
 from datetime import datetime
 
-# Add src to path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
+from chunker import chunk_pages
 from embeddings import EmbeddingModel
-from vectorstore import VectorStore
-from retriever import Retriever
-from reranker import Reranker
 from generator import Generator
-from loader import load_document
-from chunker import chunk_text
+from loader import load_document, text_quality_score
+from reranker import Reranker
+from retriever import Retriever
+from vectorstore import VectorStore
+
+
+def make_chunk(text, page=1, source="sample.txt", chunk=0):
+    """Build a chunk dict in the shape the pipeline uses."""
+    return {
+        "text": text,
+        "page": page,
+        "source": source,
+        "chunk": chunk,
+    }
+
+
+SAMPLE_CHUNKS = [
+    make_chunk(
+        "The moment of inertia of a point mass m at "
+        "distance r from the axis is I = m r^2.",
+        page=1,
+    ),
+    make_chunk(
+        "Torque is the rotational analogue of force: "
+        "tau = r F sin(theta), measured in N m.",
+        page=2,
+    ),
+    make_chunk(
+        "When no external torque acts, total angular "
+        "momentum L = I omega is conserved.",
+        page=3,
+    ),
+]
 
 
 class ValidationWorkflow:
     """Automated validation workflow for the RAG system."""
 
     def __init__(self):
-        """Initialize validation workflow."""
         self.results = []
         self.start_time = None
 
     def log_step(self, step_name, status, details=""):
-        """Log a validation step."""
         timestamp = datetime.now().strftime("%H:%M:%S")
-        status_symbol = "✓" if status == "PASS" else "✗"
-        print(f"[{timestamp}] {status_symbol} {step_name}")
+        symbol = {
+            "PASS": "PASS",
+            "FAIL": "FAIL",
+            "SKIP": "SKIP",
+        }[status]
+        print(f"[{timestamp}] {symbol} {step_name}")
         if details:
-            print(f"  └─ {details}")
+            print(f"  -> {details}")
         self.results.append((step_name, status, details))
 
     def validate_embeddings(self):
-        """Validate embedding model."""
-        print("\n" + "=" * 70)
-        print("STEP 1: Validating Embedding Model")
-        print("=" * 70)
+        print("\nSTEP 1: Embedding model")
 
         try:
             model = EmbeddingModel()
-            self.log_step("Embedding Model Initialization", "PASS")
+            self.log_step("Embedding model loads", "PASS")
 
-            # Test encoding
-            test_texts = [
+            texts = [
                 "Hello world",
                 "This is a test",
-                "RAG system validation"
+                "RAG system validation",
             ]
-            embeddings = model.encode(test_texts)
+            embeddings = model.encode(texts)
 
-            if len(embeddings) == len(test_texts):
-                self.log_step("Encoding Multiple Texts", "PASS",
-                             f"Generated {len(embeddings)} embeddings")
+            if len(embeddings) == len(texts):
+                self.log_step(
+                    "Encoding multiple texts", "PASS",
+                    f"{len(embeddings)} embeddings, "
+                    f"dimension {len(embeddings[0])}"
+                )
             else:
-                self.log_step("Encoding Multiple Texts", "FAIL",
-                             f"Expected {len(test_texts)}, got {len(embeddings)}")
-
-            # Validate embedding dimensions
-            dim = len(embeddings[0])
-            self.log_step("Embedding Dimensions", "PASS",
-                         f"Dimension: {dim}")
+                self.log_step(
+                    "Encoding multiple texts", "FAIL",
+                    f"Expected {len(texts)}, "
+                    f"got {len(embeddings)}"
+                )
 
         except Exception as e:
-            self.log_step("Embedding Model Validation", "FAIL", str(e))
+            self.log_step("Embedding model", "FAIL", str(e))
 
     def validate_vectorstore(self):
-        """Validate vector store."""
-        print("\n" + "=" * 70)
-        print("STEP 2: Validating Vector Store")
-        print("=" * 70)
+        print("\nSTEP 2: Vector store")
 
         try:
-            # Initialize components
             model = EmbeddingModel()
-            store = VectorStore()
-            self.log_step("Vector Store Initialization", "PASS")
+            store = VectorStore(persist=False)
+            self.log_step("Vector store initialises", "PASS")
 
-            # Add documents
-            docs = [
-                "Python programming",
-                "Machine learning",
-                "Data science"
-            ]
-            embeddings = model.encode(docs)
-            store.add_documents(docs, embeddings)
+            embeddings = model.encode(
+                [c["text"] for c in SAMPLE_CHUNKS]
+            )
+            store.add_documents(SAMPLE_CHUNKS, embeddings)
 
-            self.log_step("Adding Documents to Vector Store", "PASS",
-                         f"Added {len(docs)} documents")
+            if store.count() == len(SAMPLE_CHUNKS):
+                self.log_step(
+                    "Adding chunk documents", "PASS",
+                    f"Stored {store.count()} chunks"
+                )
+            else:
+                self.log_step(
+                    "Adding chunk documents", "FAIL",
+                    f"Count is {store.count()}"
+                )
 
-            # Search
-            query_emb = model.encode(["programming"])[0]
+            query_emb = model.encode(
+                ["moment of inertia formula"]
+            )[0]
             results = store.search(query_emb, n_results=2)
 
-            if len(results) > 0:
-                self.log_step("Document Search", "PASS",
-                             f"Found {len(results)} results")
+            if (
+                results
+                and "moment of inertia"
+                in results[0]["text"].lower()
+            ):
+                self.log_step(
+                    "Semantic search", "PASS",
+                    "Relevant chunk ranked first"
+                )
             else:
-                self.log_step("Document Search", "FAIL", "No results found")
+                self.log_step(
+                    "Semantic search", "FAIL",
+                    "Unexpected top result"
+                )
 
         except Exception as e:
-            self.log_step("Vector Store Validation", "FAIL", str(e))
+            self.log_step("Vector store", "FAIL", str(e))
 
     def validate_retriever(self):
-        """Validate retriever and reranker."""
-        print("\n" + "=" * 70)
-        print("STEP 3: Validating Retriever and Reranker")
-        print("=" * 70)
+        print("\nSTEP 3: Retriever and reranker")
 
         try:
-            # Initialize all components
             model = EmbeddingModel()
-            store = VectorStore()
+            store = VectorStore(persist=False)
             reranker = Reranker()
             retriever = Retriever(store, model, reranker)
+            self.log_step(
+                "Retriever and reranker initialise", "PASS"
+            )
 
-            self.log_step("Retriever Initialization", "PASS")
+            embeddings = model.encode(
+                [c["text"] for c in SAMPLE_CHUNKS]
+            )
+            store.add_documents(SAMPLE_CHUNKS, embeddings)
 
-            # Add sample documents
-            docs = [
-                "Python is a programming language",
-                "Machine learning uses algorithms",
-                "Deep learning involves neural networks",
-                "NLP processes human language",
-                "RAG combines retrieval and generation"
-            ]
+            results = retriever.retrieve(
+                "what is the SI unit of torque",
+                n_results=3,
+                top_k=2,
+            )
 
-            embeddings = model.encode(docs)
-            store.add_documents(docs, embeddings)
-
-            self.log_step("Sample Documents Added", "PASS",
-                         f"Added {len(docs)} documents")
-
-            # Test retrieval
-            query = "machine learning algorithms"
-            results = retriever.retrieve(query, n_results=3, top_k=2)
-
-            if len(results) > 0:
-                self.log_step("Document Retrieval", "PASS",
-                             f"Retrieved {len(results)} documents")
+            if (
+                results
+                and results[0]["metadata"]["page"] == 2
+                and "rerank_score" in results[0]
+            ):
+                self.log_step(
+                    "Retrieve and rerank", "PASS",
+                    "Torque chunk ranked first"
+                )
             else:
-                self.log_step("Document Retrieval", "FAIL", "No documents retrieved")
-
-            # Verify results are reranked
-            self.log_step("Reranking Results", "PASS",
-                         f"Results processed through reranker")
+                self.log_step(
+                    "Retrieve and rerank", "FAIL",
+                    "Unexpected ranking"
+                )
 
         except Exception as e:
-            self.log_step("Retriever Validation", "FAIL", str(e))
+            self.log_step(
+                "Retriever validation", "FAIL", str(e)
+            )
 
-    def validate_generator(self):
-        """Validate answer generation."""
-        print("\n" + "=" * 70)
-        print("STEP 4: Validating Generator")
-        print("=" * 70)
+    def validate_loader(self):
+        print("\nSTEP 4: Document loader")
 
         try:
-            generator = Generator()
-            self.log_step("Generator Initialization", "PASS")
+            good = (
+                "The moment of inertia of a rigid body "
+                "depends on the mass distribution "
+                "relative to the axis of rotation. "
+            ) * 3
 
-            # Test generation with sample documents
-            question = "What is machine learning?"
-            documents = [
+            if (
+                text_quality_score("") == 0.0
+                and text_quality_score(good) >= 0.85
+                and text_quality_score("I = mr^2") < 0.65
+            ):
+                self.log_step(
+                    "Text quality scoring", "PASS"
+                )
+            else:
+                self.log_step(
+                    "Text quality scoring", "FAIL",
+                    "Unexpected scores"
+                )
+
+            pages = [
                 {
-                    "text": "Machine learning is a subset of AI",
-                    "metadata": {"source": "test.txt", "page": 1}
-                },
-                {
-                    "text": "It uses algorithms to learn from data",
-                    "metadata": {"source": "test.txt", "page": 2}
+                    "text": "alpha beta gamma " * 10,
+                    "page": 7,
+                    "source": "x.pdf",
+                    "extraction_method": "text",
                 }
             ]
+            chunks = chunk_pages(pages)
 
-            try:
-                answer = generator.generate(question, documents)
-                if answer and len(answer) > 0:
-                    self.log_step("Text Generation", "PASS",
-                                 f"Generated {len(answer)} character response")
-                else:
-                    self.log_step("Text Generation", "FAIL", "Empty response")
-            except Exception as gen_error:
-                # Generator might fail if ollama is not running
-                self.log_step("Text Generation", "FAIL",
-                             "Ollama may not be running (optional)")
+            if (
+                chunks
+                and chunks[0]["page"] == 7
+                and chunks[0]["source"] == "x.pdf"
+            ):
+                self.log_step(
+                    "Page chunking keeps metadata", "PASS"
+                )
+            else:
+                self.log_step(
+                    "Page chunking keeps metadata", "FAIL"
+                )
 
         except Exception as e:
-            self.log_step("Generator Validation", "FAIL", str(e))
+            self.log_step("Loader validation", "FAIL", str(e))
 
-    def validate_full_pipeline(self):
-        """Validate the complete RAG pipeline."""
-        print("\n" + "=" * 70)
-        print("STEP 5: Validating Full RAG Pipeline")
-        print("=" * 70)
+    def validate_generator(self):
+        print("\nSTEP 5: Generator (needs Ollama)")
 
         try:
-            # Initialize all components
-            model = EmbeddingModel()
-            store = VectorStore()
-            reranker = Reranker()
-            retriever = Retriever(store, model, reranker)
             generator = Generator()
+            self.log_step(
+                "Generator initialises", "PASS",
+                f"model: {generator.model}"
+            )
 
-            self.log_step("All Components Initialized", "PASS")
+            try:
+                answer = generator.generate(
+                    "What is the moment of inertia "
+                    "of a point mass?",
+                    SAMPLE_CHUNKS[:1],
+                )
+            except RuntimeError:
+                self.log_step(
+                    "Text generation", "SKIP",
+                    "Ollama is not running or the "
+                    "model is not pulled; install "
+                    "Ollama and run "
+                    f"`ollama pull {generator.model}`"
+                )
+                return
 
-            # Prepare documents
-            docs = [
-                "RAG systems combine retrieval and generation",
-                "They improve answer quality by using relevant documents",
-                "The system retrieves documents, then generates answers",
-                "This is called Retrieval-Augmented Generation"
-            ]
-
-            embeddings = model.encode(docs)
-            store.add_documents(docs, embeddings)
-
-            self.log_step("Documents Ingested", "PASS",
-                         f"Ingested {len(docs)} documents")
-
-            # Test full pipeline
-            query = "What is a RAG system?"
-            retrieved_docs = retriever.retrieve(query, n_results=3, top_k=2)
-
-            if len(retrieved_docs) > 0:
-                self.log_step("Pipeline: Retrieval Complete", "PASS",
-                             f"Retrieved {len(retrieved_docs)} documents")
-
-                try:
-                    answer = generator.generate(query, retrieved_docs)
-                    if answer:
-                        self.log_step("Pipeline: Generation Complete", "PASS",
-                                     f"Generated {len(answer)} character response")
-                    else:
-                        self.log_step("Pipeline: Generation Complete", "FAIL",
-                                     "Empty response")
-                except Exception as gen_error:
-                    self.log_step("Pipeline: Generation Complete", "FAIL",
-                                 "Ollama may not be running")
+            if answer and answer.strip():
+                self.log_step(
+                    "Text generation", "PASS",
+                    f"{len(answer)} characters"
+                )
             else:
-                self.log_step("Pipeline: Retrieval Complete", "FAIL",
-                             "No documents retrieved")
+                self.log_step(
+                    "Text generation", "FAIL",
+                    "Empty response"
+                )
 
         except Exception as e:
-            self.log_step("Full Pipeline Validation", "FAIL", str(e))
+            self.log_step(
+                "Generator validation", "FAIL", str(e)
+            )
 
     def generate_report(self):
-        """Generate validation report."""
-        print("\n" + "=" * 70)
+        print("\n" + "=" * 60)
         print("VALIDATION SUMMARY")
-        print("=" * 70)
+        print("=" * 60)
 
-        passed = sum(1 for _, status, _ in self.results if status == "PASS")
-        failed = sum(1 for _, status, _ in self.results if status == "FAIL")
+        passed = sum(
+            1 for _, s, _ in self.results if s == "PASS"
+        )
+        failed = sum(
+            1 for _, s, _ in self.results if s == "FAIL"
+        )
+        skipped = sum(
+            1 for _, s, _ in self.results if s == "SKIP"
+        )
         total = len(self.results)
 
-        print(f"Total Checks:   {total}")
-        print(f"Passed:         {passed}")
-        print(f"Failed:         {failed}")
-        print(f"Success Rate:   {(passed/total*100):.1f}%" if total > 0 else "N/A")
-        print(f"Completed at:   {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        print("=" * 70)
+        print(f"Total checks: {total}")
+        print(f"Passed:       {passed}")
+        print(f"Failed:       {failed}")
+        print(f"Skipped:      {skipped}")
+        print("=" * 60)
 
-        # Save report to file
-        report_path = Path(__file__).parent / "validation_report.txt"
+        report_path = (
+            Path(__file__).parent
+            / "validation_report.txt"
+        )
         with open(report_path, "w") as f:
             f.write("RAG SYSTEM VALIDATION REPORT\n")
-            f.write("=" * 70 + "\n")
-            f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-
+            f.write("=" * 60 + "\n")
+            f.write(
+                "Generated: "
+                + datetime.now().strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
+                + "\n\n"
+            )
             for step, status, details in self.results:
                 f.write(f"[{status}] {step}\n")
                 if details:
                     f.write(f"  Details: {details}\n")
-                f.write("\n")
+            f.write(
+                f"\nPassed {passed}/{total}, "
+                f"failed {failed}, skipped {skipped}\n"
+            )
 
-            f.write(f"\nTotal: {passed}/{total} checks passed\n")
-
-        print(f"\nReport saved to: {report_path}\n")
+        print(f"Report saved to: {report_path}\n")
 
     def run(self):
-        """Run complete validation workflow."""
         self.start_time = time.time()
 
-        print("\n" + "=" * 70)
-        print("RAG SYSTEM VALIDATION WORKFLOW")
-        print("=" * 70)
-        print(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        print("=" * 60)
+        print("RAG SYSTEM VALIDATION")
+        print("=" * 60)
 
-        # Run validation steps
         self.validate_embeddings()
         self.validate_vectorstore()
         self.validate_retriever()
+        self.validate_loader()
         self.validate_generator()
-        self.validate_full_pipeline()
 
-        # Generate final report
         self.generate_report()
 
         duration = time.time() - self.start_time
-        print(f"Validation completed in {duration:.2f} seconds\n")
+        print(f"Completed in {duration:.1f} seconds\n")
 
-        # Return success if all validations passed
-        failed = sum(1 for _, status, _ in self.results if status == "FAIL")
+        failed = sum(
+            1 for _, s, _ in self.results if s == "FAIL"
+        )
         return failed == 0
 
 
 def main():
-    """Main entry point."""
     workflow = ValidationWorkflow()
     success = workflow.run()
     sys.exit(0 if success else 1)
