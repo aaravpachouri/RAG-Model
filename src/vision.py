@@ -1,9 +1,12 @@
+"""Optional vision-based page extraction using a local Ollama VLM."""
+
+import os
 from pathlib import Path
 
-import ollama
-
-
-VISION_MODEL = "qwen3-vl:4b-instruct"
+VISION_MODEL = os.environ.get(
+    "RAG_VISION_MODEL",
+    "qwen3-vl:4b-instruct"
+)
 
 
 def extract_page_content(
@@ -12,9 +15,11 @@ def extract_page_content(
     source_name: str
 ) -> str:
     """
-    Extract useful academic content from a PDF page
-    using Qwen3-VL.
+    Extract useful academic content from a rendered
+    PDF page image using a local vision model.
     """
+
+    import ollama
 
     image_file = Path(image_path)
 
@@ -25,7 +30,7 @@ def extract_page_content(
 
     prompt = f"""
 Extract the important academic content from this
-physics textbook page for a RAG knowledge base.
+study-notes page for a RAG knowledge base.
 
 Document: {source_name}
 Page: {page_number}
@@ -43,7 +48,7 @@ Rules:
 - Return only the extracted content.
 
 Example:
-I = mr²
+I = mr^2
 
 Example:
 I = \\sum_i m_i r_i^2
