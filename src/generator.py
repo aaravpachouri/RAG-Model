@@ -2,12 +2,12 @@
 
 import os
 
-# The project default is the vision-capable Qwen the
-# author already has installed (user-confirmed direction,
-# November 2026): one model then covers answer generation
-# and page-image extraction. The exact installed tag is
-# not verified from here; scripts/check_setup.py detects
-# it on the machine and prints the right RAG_MODEL value.
+# The project default is the vision-capable Qwen model
+# the author has installed (seen in his `ollama list`,
+# November 2026): one model then covers answer
+# generation and page-image extraction.
+# scripts/check_setup.py detects the installed tags on
+# the machine and prints the right RAG_MODEL value.
 DEFAULT_MODEL = "qwen3-vl:4b-instruct"
 
 
@@ -80,7 +80,6 @@ def parse_answer(raw: str):
     did not follow the requested format.
     """
 
-    answer = raw.strip()
     citation = None
 
     not_found_markers = (
@@ -94,16 +93,22 @@ def parse_answer(raw: str):
         answer_part, _, source_part = raw.partition(
             "SOURCE:"
         )
-        answer = answer_part.replace(
-            "ANSWER:", ""
-        ).strip()
         source_lines = source_part.strip().splitlines()
         citation = source_lines[0].strip() if source_lines else None
 
         if citation and citation.upper() in ("NONE", "N/A", "-"):
             citation = None
     elif "ANSWER:" in raw:
-        answer = raw.partition("ANSWER:")[2].strip()
+        answer_part = raw.partition("ANSWER:")[2]
+    else:
+        answer_part = raw
+
+    # The displayed answer never keeps the model's
+    # scaffolding: the ANSWER: label comes off, and the
+    # QUOTE: section is shown separately by the caller,
+    # under the evidence label, only when it verifies.
+    answer = answer_part.partition("QUOTE:")[0]
+    answer = answer.replace("ANSWER:", "").strip()
 
     # When the model reports the answer is missing,
     # normalise the message and never show a source:
