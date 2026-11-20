@@ -89,6 +89,66 @@ def test_parse_answer_handles_unformatted_reply():
     assert citation is None
 
 
+def test_parse_answer_strips_quote_scaffolding():
+
+    raw = (
+        "ANSWER: I = m r^2\n"
+        "QUOTE: The moment of inertia is I = m r^2."
+    )
+
+    answer, citation = parse_answer(raw)
+
+    assert answer == "I = m r^2"
+    assert citation is None
+
+
+def test_parse_answer_strips_quote_before_source():
+
+    raw = (
+        "ANSWER: I = m r^2\n"
+        "QUOTE: The moment of inertia is I = m r^2.\n"
+        "SOURCE: notes.pdf, Page: 1"
+    )
+
+    answer, citation = parse_answer(raw)
+
+    assert answer == "I = m r^2"
+    assert citation == "notes.pdf, Page: 1"
+
+
+def test_generate_verified_quote_hides_scaffolding(
+    monkeypatch,
+):
+    """End-to-end formatting: the reply's ANSWER:/QUOTE:
+    lines never leak into the shown answer, and a quote
+    that verifies earns the Evidence label."""
+
+    import sys
+    import types
+
+    raw = (
+        "ANSWER: I = m r^2\n"
+        "QUOTE: The moment of inertia of a point "
+        "mass is I = m r^2."
+    )
+
+    fake_ollama = types.SimpleNamespace(
+        chat=lambda **kwargs: {
+            "message": {"content": raw}
+        }
+    )
+    monkeypatch.setitem(
+        sys.modules, "ollama", fake_ollama
+    )
+
+    result = Generator(model="m").generate("q", DOCS)
+
+    assert "ANSWER:" not in result
+    assert "QUOTE:" not in result
+    assert "Evidence (verified quote" in result
+    assert "notes.pdf" in result
+
+
 def test_validate_citation_keeps_real_source():
 
     citation = validate_citation(
