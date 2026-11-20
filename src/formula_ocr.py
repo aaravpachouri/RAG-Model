@@ -1,3 +1,5 @@
+"""Experimental: locate a formula near a heading and OCR that region."""
+
 import io
 
 import pymupdf
@@ -5,12 +7,7 @@ import pytesseract
 
 from PIL import Image, ImageEnhance, ImageFilter
 
-
-TESSERACT_PATH = (
-    r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-)
-
-pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
+from ocr import TESSERACT_CMD
 
 
 def get_page_image(page):
@@ -53,6 +50,13 @@ def extract_formula_region(page):
     'For a particle at a distance'
     and OCR the area around/below it.
     """
+
+    if not TESSERACT_CMD:
+        raise RuntimeError(
+            "Tesseract is not installed. Install it "
+            "or set the TESSERACT_CMD environment "
+            "variable."
+        )
 
     image = get_page_image(
         page
@@ -106,8 +110,6 @@ def extract_formula_region(page):
     # Get coordinate of the matching phrase.
     valid_indices = []
 
-    current = 0
-
     for i, text in enumerate(
         data["text"]
     ):
@@ -150,10 +152,6 @@ def extract_formula_region(page):
 
     crop = preprocess(
         crop
-    )
-
-    crop.save(
-        "data/formula_region.png"
     )
 
     # Try multiple OCR modes.
