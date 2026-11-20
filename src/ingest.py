@@ -1,3 +1,6 @@
+"""Ingest documents from data/documents into the vector store."""
+
+import sys
 from pathlib import Path
 
 from loader import load_document
@@ -17,105 +20,168 @@ DOCUMENTS_PATH = (
 )
 
 
-def main():
+def find_documents(documents_path=None):
+    """List ingestible files in the documents directory."""
 
-    print("=" * 50)
-    print("RAG DOCUMENT INGESTION")
-    print("=" * 50)
-
-    files = list(
-        DOCUMENTS_PATH.glob("*.pdf")
+    directory = Path(
+        documents_path or DOCUMENTS_PATH
     )
 
-    files += list(
-        DOCUMENTS_PATH.glob("*.txt")
+    if not directory.exists():
+        return []
+
+    files = sorted(
+        directory.glob("*.pdf")
     )
+
+    files += sorted(
+        directory.glob("*.txt")
+    )
+
+    return files
+
+
+def ingest_documents(
+    documents_path=None,
+    embedding_model=None,
+    vector_store=None,
+    use_vision=True,
+    verbose=True,
+    reset=False
+):
+    """
+    Load every PDF/TXT in the documents directory,
+    chunk, embed and store them. Returns the number
+    of chunks stored.
+    """
+
+    files = find_documents(documents_path)
 
     if not files:
+        if reset:
+            if vector_store is None:
+                vector_store = VectorStore()
+            vector_store.reset()
+        if verbose:
+            print("No PDF or TXT files found.")
+            if not reset:
+                print(
+                    "Empty folder: index unchanged. "
+                    "Use --reset to explicitly clear it."
+                )
+        return 0
 
-        print(
-            "No PDF or TXT files found."
-        )
+    if verbose:
+        print(f"Found {len(files)} documents.")
 
-        return
-
-    print(
-        f"\nFound {len(files)} documents.\n"
-    )
-
-    all_documents = []
+    all_chunks = []
 
     for file_path in files:
 
-        print(
-            f"Loading: {file_path.name}"
-        )
+        if verbose:
+            print(
+                f"Loading: {file_path.name}"
+            )
 
         pages = load_document(
-            str(file_path)
+            str(file_path),
+            use_vision=use_vision,
+            verbose=verbose
         )
 
         chunks = chunk_pages(
             pages
         )
 
-        all_documents.extend(
-            chunks
+        if not chunks:
+            raise RuntimeError(
+                f"No text extracted from {file_path.name}. "
+                "Index unchanged. Check extraction before "
+                "re-ingesting; no stale chunks were pruned."
+            )
+
+        all_chunks.extend(chunks)
+
+        if verbose:
+            print(
+                f"  Pages: {len(pages)}"
+            )
+
+            print(
+                f"  Chunks: {len(chunks)}"
+            )
+
+    if not all_chunks:
+        if verbose:
+            print(
+                "\nNo text could be extracted "
+                "from the documents."
+            )
+        return 0
+
+    if verbose:
+        print(
+            f"\nTotal chunks: "
+            f"{len(all_chunks)}"
         )
 
         print(
-            f"  Pages: {len(pages)}"
+            "\nCreating embeddings..."
         )
 
-        print(
-            f"  Chunks: {len(chunks)}"
-        )
-
-    print(
-        f"\nTotal chunks: "
-        f"{len(all_documents)}"
-    )
-
-    print(
-        "\nCreating embeddings..."
-    )
-
-    embedding_model = EmbeddingModel()
+    if embedding_model is None:
+        embedding_model = EmbeddingModel()
 
     texts = [
-        document["text"]
-        for document in all_documents
+        chunk["text"]
+        for chunk in all_chunks
     ]
 
     embeddings = embedding_model.encode(
         texts
     )
 
-    print(
-        "Embeddings created."
-    )
+    if verbose:
+        print(
+            "Embeddings created."
+        )
 
-    print(
-        "\nSaving to ChromaDB..."
-    )
+        print(
+            "\nSaving to ChromaDB..."
+        )
 
-    vector_store = VectorStore()
+    if vector_store is None:
+        vector_store = VectorStore()
 
+    if reset:
+        if verbose:
+            print(
+                "\nClearing existing index "
+                "(--reset)..."
+            )
+        vector_store.reset()
     vector_store.add_documents(
-        all_documents,
-        embeddings
+        all_chunks,
+        embeddings,
+        synchronize=True
     )
 
-    print(
-        "\n" + "=" * 50
-    )
+    if verbose:
+        print(
+            "\nINGESTION COMPLETE"
+        )
 
-    print(
-        "INGESTION COMPLETE"
-    )
+    return len(all_chunks)
 
-    print(
-        "=" * 50
+
+def main():
+
+    print("=" * 50)
+    print("RAG DOCUMENT INGESTION")
+    print("=" * 50)
+
+    ingest_documents(
+        reset="--reset" in sys.argv
     )
 
 
