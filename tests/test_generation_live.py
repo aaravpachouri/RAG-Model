@@ -173,11 +173,14 @@ def test_grounded_answer_with_citation(qa_stack):
         or "r²" in answer
         or "inertia" in answer.lower()
     )
-    # Either a verified citation (model cited a
-    # retrieved file+page) or a clearly-labelled
-    # unverified retrieved-context reference.
+    # The answer must carry one of the system's
+    # grounding labels: a verified quote (strongest),
+    # a citation verified against the retrieved set,
+    # or a clearly-labelled unverified reference. A
+    # bare answer with no label fails.
     assert (
-        "Source:" in answer
+        "Evidence (verified quote" in answer
+        or "Source:" in answer
         or "Reference (top retrieved context" in answer
     )
     assert "sample_physics_notes.pdf" in answer
