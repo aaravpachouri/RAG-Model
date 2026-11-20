@@ -49,3 +49,5 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
+# Generated reports
+validation_report.txt
