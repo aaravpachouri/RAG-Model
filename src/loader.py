@@ -1,11 +1,20 @@
+"""Document loading: extract text from PDF and TXT files.
+
+PDF pages are first read with normal text extraction. Pages whose
+extracted text looks broken or incomplete can optionally be passed to a
+local vision model (via Ollama) for a second, image-based extraction.
+The vision step is optional: if Ollama or the vision model is not
+available, the loader falls back to the normal text.
+"""
+
+import os
 from pathlib import Path
 
 import pymupdf
 
-from vision import extract_page_content
-
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+TEMP_DIR = PROJECT_ROOT / "data" / ".tmp"
 
 
 def text_quality_score(text: str) -> float:
@@ -122,7 +131,18 @@ def render_page(page, scale: float = 2.5):
     )
 
 
-def load_pdf(path: str):
+def _vision_available() -> bool:
+    """Vision extraction needs the ollama package and a running server."""
+    if os.environ.get("RAG_DISABLE_VISION"):
+        return False
+    try:
+        import ollama  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+def load_pdf(path: str, use_vision: bool = True, verbose: bool = True):
 
     document = pymupdf.open(path)
 
@@ -131,24 +151,23 @@ def load_pdf(path: str):
 
     pages = []
 
-    print(
-        f"\nProcessing: {source_name}"
-    )
+    if verbose:
+        print(f"\nProcessing: {source_name}")
+        print(f"Total pages: {total_pages}\n")
 
-    print(
-        f"Total pages: {total_pages}\n"
-    )
+    vision_warned = False
 
     for page_number, page in enumerate(
         document,
         start=1
     ):
 
-        print(
-            f"[{page_number}/{total_pages}] "
-            f"Extracting text...",
-            flush=True
-        )
+        if verbose:
+            print(
+                f"[{page_number}/{total_pages}] "
+                f"Extracting text...",
+                flush=True
+            )
 
         normal_text = (
             page.get_text("text")
@@ -159,83 +178,116 @@ def load_pdf(path: str):
             normal_text
         )
 
-        print(
-            f"    Text quality: "
-            f"{quality:.2f}",
-            flush=True
-        )
+        if verbose:
+            print(
+                f"    Text quality: "
+                f"{quality:.2f}",
+                flush=True
+            )
 
         final_text = normal_text
         extraction_method = "text"
 
-        if page_needs_vision(
+        if use_vision and page_needs_vision(
             page,
             normal_text
         ):
 
-            print(
-                "    → Visual extraction needed",
-                flush=True
-            )
-
-            image_path = (
-                PROJECT_ROOT
-                / "data"
-                / ".rag_temp_page.png"
-            )
-
-            pixmap = render_page(
-                page
-            )
-
-            pixmap.save(
-                str(image_path)
-            )
-
-            try:
-
-                vision_text = (
-                    extract_page_content(
-                        str(image_path),
-                        page_number,
-                        source_name
-                    )
-                )
-
-                if vision_text.strip():
-
-                    final_text = vision_text
-                    extraction_method = "vision"
-
+            if not _vision_available() and not vision_warned:
+                if verbose:
                     print(
-                        "    → Vision extraction complete",
+                        "    -> Vision extraction "
+                        "unavailable (ollama not "
+                        "installed); using normal "
+                        "text extraction",
+                        flush=True
+                    )
+                vision_warned = True
+
+            elif _vision_available():
+
+                if verbose:
+                    print(
+                        "    -> Visual extraction needed",
                         flush=True
                     )
 
-            except Exception as exc:
-
-                print(
-                    f"    → Vision failed: {exc}",
-                    flush=True
+                TEMP_DIR.mkdir(
+                    parents=True,
+                    exist_ok=True
                 )
 
-                print(
-                    "    → Using normal extraction",
-                    flush=True
+                image_path = (
+                    TEMP_DIR / "page.png"
                 )
 
-            finally:
+                pixmap = render_page(
+                    page
+                )
 
-                if image_path.exists():
+                pixmap.save(
+                    str(image_path)
+                )
 
-                    image_path.unlink()
+                try:
+
+                    # Imported lazily so that text-only
+                    # use never requires the vision
+                    # model or a running Ollama server.
+                    from vision import (
+                        extract_page_content
+                    )
+
+                    vision_text = (
+                        extract_page_content(
+                            str(image_path),
+                            page_number,
+                            source_name
+                        )
+                    )
+
+                    if vision_text.strip():
+
+                        final_text = vision_text
+                        extraction_method = "vision"
+
+                        if verbose:
+                            print(
+                                "    -> Vision "
+                                "extraction "
+                                "complete",
+                                flush=True
+                            )
+
+                except Exception as exc:
+
+                    if verbose:
+                        print(
+                            f"    -> Vision failed: "
+                            f"{exc}",
+                            flush=True
+                        )
+
+                        print(
+                            "    -> Using normal "
+                            "extraction",
+                            flush=True
+                        )
+
+                finally:
+
+                    if image_path.exists():
+
+                        image_path.unlink()
 
         else:
 
-            print(
-                "    → Normal extraction sufficient",
-                flush=True
-            )
+            if verbose:
+                print(
+                    "    -> Normal extraction "
+                    "sufficient",
+                    flush=True
+                )
 
         if final_text.strip():
 
@@ -249,9 +301,8 @@ def load_pdf(path: str):
 
     document.close()
 
-    print(
-        f"\nFinished: {source_name}"
-    )
+    if verbose:
+        print(f"\nFinished: {source_name}")
 
     return pages
 
@@ -270,16 +321,20 @@ def load_txt(path: str):
     }]
 
 
-def load_document(path: str):
+def load_document(path: str, use_vision: bool = True, verbose: bool = True):
+    """Load a document as a list of page dicts.
+
+    Each page dict has: text, page, source, extraction_method.
+    """
 
     extension = Path(path).suffix.lower()
 
     if extension == ".pdf":
-        return load_pdf(path)
+        return load_pdf(path, use_vision=use_vision, verbose=verbose)
 
     if extension == ".txt":
         return load_txt(path)
 
     raise ValueError(
         f"Unsupported file type: {extension}"
-    )
+                )
