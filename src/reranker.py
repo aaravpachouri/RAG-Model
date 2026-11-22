@@ -1,12 +1,37 @@
+import os
+
 from sentence_transformers import CrossEncoder
+
+from embeddings import detect_device, default_batch_size
+
+
+DEFAULT_RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
 
 class Reranker:
 
-    def __init__(self):
+    def __init__(
+        self,
+        model_name: str = None,
+        device: str = None,
+        batch_size: int = None,
+    ):
+
+        self.device = (
+            device
+            or os.environ.get("RAG_RERANK_DEVICE")
+            or detect_device()
+        )
+
+        self.batch_size = int(
+            batch_size
+            or os.environ.get("RAG_RERANK_BATCH_SIZE")
+            or default_batch_size(self.device)
+        )
 
         self.model = CrossEncoder(
-            "cross-encoder/ms-marco-MiniLM-L-6-v2"
+            model_name or DEFAULT_RERANKER_MODEL,
+            device=self.device,
         )
 
     def rerank(
@@ -29,7 +54,8 @@ class Reranker:
             ])
 
         scores = self.model.predict(
-            pairs
+            pairs,
+            batch_size=self.batch_size,
         )
 
         for document, score in zip(
