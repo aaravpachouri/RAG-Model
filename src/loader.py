@@ -8,6 +8,7 @@ available, the loader falls back to the normal text.
 """
 
 import os
+import time
 from pathlib import Path
 
 import pymupdf
@@ -238,6 +239,10 @@ def load_pdf(path: str, use_vision: bool = True, verbose: bool = True):
                         extract_page_content
                     )
 
+                    vision_started = (
+                        time.perf_counter()
+                    )
+
                     vision_text = (
                         extract_page_content(
                             str(image_path),
@@ -255,7 +260,8 @@ def load_pdf(path: str, use_vision: bool = True, verbose: bool = True):
                             print(
                                 "    -> Vision "
                                 "extraction "
-                                "complete",
+                                f"complete in "
+                                f"{time.perf_counter() - vision_started:.1f}s",
                                 flush=True
                             )
 
@@ -337,4 +343,4 @@ def load_document(path: str, use_vision: bool = True, verbose: bool = True):
 
     raise ValueError(
         f"Unsupported file type: {extension}"
-                )
+                        )
