@@ -2,6 +2,15 @@
 
 A Retrieval-Augmented Generation system for asking questions over your own study notes. Point it at a folder of PDFs (for example class notes), and it indexes them, finds the passages relevant to your question, and offers an optional, unverified generated explanation alongside the retrieved text and page references. Everything runs locally: no cloud API keys, no usage costs.
 
+Highlights:
+
+- Fully local pipeline: PDF extraction, embeddings, vector search, reranking and generation all run on your machine (PyMuPDF, sentence-transformers, ChromaDB, Ollama)
+- Abstains instead of inventing: a reranker-confidence gate refuses questions the indexed notes do not support, rather than letting the LLM answer from training knowledge
+- Verifiable output: retrieved passages are printed above every answer, and citations/quotes are checked against what was actually retrieved
+- Incremental indexing: content-hash manifest skips unchanged files, resumes after interruption, and prunes deleted files - adding one PDF to a large library costs only that PDF's processing time
+- GPU-accelerated embeddings and reranking with automatic CUDA detection (CPU fallback)
+- 76 automated tests, including end-to-end retrieval and abstention checks
+
 ## How it works
 
 ```text
@@ -87,7 +96,15 @@ python src/main.py chat
 
 Running `python src/main.py` with no arguments ingests first if the store is empty, then starts the chat.
 
-Flags: `--no-vision` disables vision extraction during ingestion (faster, text-only), `--no-rerank` skips the reranking stage, `--reset` forces a full rebuild of the index. After successful extraction and embedding, a plain `ingest` upserts the current chunks and prunes IDs no longer in the folder, including trailing chunks of shortened files. Extraction failures abort before index writes. An empty folder preserves the old index unless `--reset` explicitly clears it. Synchronization is not transactional: an interrupted write can leave a mixed index; rerun ingestion before querying it. Use `--reset` after changing chunking settings or if the index seems corrupt.
+Flags: `--no-vision` disables vision extraction during ingestion (faster, text-only), `--no-rerank` skips the reranking stage, `--reset` forces a full rebuild of the index, `--force` re-embeds every file even when unchanged. An empty folder preserves the old index unless `--reset` explicitly clears it. Use `--reset` after changing chunking settings or if the index seems corrupt.
+
+### Incremental ingestion
+
+Re-running `ingest` is cheap: the indexer records the SHA-256 of every indexed file in `data/ingest_manifest.json` (gitignored) and only does real work for files that are new or edited. Unchanged files are skipped without re-embedding, files deleted from the folder have their chunks pruned, and shortened files lose their trailing chunks. Each file is loaded, embedded and stored one at a time, which keeps memory bounded by the largest single document and makes interruption safe: if a run stops halfway, every file that completed stays indexed, and the next run resumes by skipping it. A file whose extraction fails keeps its previously stored chunks and is reported; fix or remove it and re-run. Adding one new PDF to an existing library therefore costs only that PDF's extraction and embedding time, not a full rebuild.
+
+### Speed and GPU use
+
+The embedding and reranker models automatically use an NVIDIA GPU when torch can see one (`RAG_DEVICE=cuda|cpu` overrides), with batch sizes tuned per device (`RAG_EMBED_BATCH_SIZE`, default 128 on GPU, 32 on CPU). On a GPU-equipped laptop this makes first-time embedding of large documents noticeably faster than CPU-only; reruns of unchanged folders cost only file hashing. The remaining slow path is vision extraction of image-only pages, which runs through the local Ollama model one page at a time and is inherently minutes-per-page-scale on large scanned documents; per-page timings are printed so progress is visible. Actual numbers depend on your hardware and documents: measure on your own machine with the per-file timings `ingest` prints rather than trusting any figure here.
 
 ### Try it without your own notes
 
@@ -136,7 +153,7 @@ Model choice matters for the generation step. Download sizes: llama3.2:3b is 2.0
 ## Testing
 
 ```bash
-# Unit + end-to-end tests (64 with Ollama running)
+# Unit + end-to-end tests (76 with Ollama running)
 python -m pytest
 
 # Component-by-component validation with a written report
@@ -145,7 +162,7 @@ python validate.py
 
 The test suite generates its own sample PDF, so it never needs private notes. Tests that need a running Ollama server (grounded answer with citation, abstention on off-topic questions) are skipped automatically when no server is reachable. See TESTING.md for details.
 
-Tested with: Python 3.10; Ollama 0.40.16 with qwen2.5:0.5b as the generation model the configured default is qwen3-vl:4b-instruct and follows the same code path; a clean virtual environment install of `requirements.txt` (latest releases: torch 2.14, sentence-transformers 6.3, chromadb 1.5) and an older set (torch 2.2, sentence-transformers 3.4, chromadb 1.3). 64 tests pass with an Ollama server running, 61 pass and 3 live tests skip without one.
+Tested with: Python 3.10; Ollama 0.40.16 with qwen2.5:0.5b as the generation model the configured default is qwen3-vl:4b-instruct and follows the same code path; a clean virtual environment install of `requirements.txt` (latest releases: torch 2.14, sentence-transformers 6.3, chromadb 1.5) and an older set (torch 2.2, sentence-transformers 3.4, chromadb 1.3). 76 tests pass with an Ollama server running, 73 pass and 3 live tests skip without one.
 
 Real-document checks used a private 52-page PDF and three grounded questions. In a roughly 2 GB RAM environment, qwen2.5:0.5b was tested end-to-end; retrieval ranked the relevant pages first, but generation misread some passages. llama3.2:1b ran alone but failed for lack of memory alongside the retrieval stack. When retrieval and generation were run in separate processes, its first run answered the quorum question incorrectly and falsely abstained on two other answerable questions. A later repeat of the quorum question returned the correct count, showing that a single successful run is not evidence of reliable generation. A separate generation-only qwen2.5:1.5b check also answered the wrong sub-question. These are diagnostic checks, not a benchmark or evidence that those models are adequate. The configured default qwen3-vl:4b-instruct was not validated here (it could not run in the 2 GB sandbox at all) and its answer quality remains untested.
 
@@ -186,6 +203,7 @@ Honest ones, so results are not over-trusted:
 - Chunking is word-based and does not understand document structure (headings, columns, tables).
 - Vision extraction quality depends on the local vision model and page rendering.
 - Scanned/image-only PDFs need the vision model or OCR; plain text extraction returns nothing for them.
+- First-time ingestion of many or scanned documents is slow: embedding is linear in total chunk count, and vision extraction runs one page at a time through the local model. Re-ingestion is incremental, so this cost is paid once per document version, not per run.
 
 ## Data and privacy
 
@@ -196,4 +214,4 @@ Notes are ingested and indexed entirely on your own machine; nothing is sent to 
 Aarav Pachouri
 GitHub: [@aaravpachouri](https://github.com/aaravpachouri)
 
-Contribution note: the original design and code are the author's. The November 2026 repair work (wiring fixes, CLI, test suite, abstention gate, docs rewrite) was done with an AI coding assistant and is attributed as such in the commit history.
+Contribution note: the original design and code are the author's. The November 2026 repair work (wiring fixes, CLI, test suite, abstention gate, docs rewrite) and the subsequent performance and scalability work (incremental manifest-based ingestion with resume, GPU-aware batching, per-file progress) were done with an AI coding assistant and are attributed as such in the commit history.
