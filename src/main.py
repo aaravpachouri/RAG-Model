@@ -279,8 +279,18 @@ def main():
         help=(
             "Clear the whole index before "
             "ingesting (plain ingestion already "
-            "prunes deleted files and re-indexes "
-            "edited ones)"
+            "skips unchanged files, prunes deleted "
+            "files and re-indexes edited ones)"
+        )
+    )
+
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "Re-embed every document even when "
+            "unchanged (ingest only; normally only "
+            "new or edited files are embedded)"
         )
     )
 
@@ -297,7 +307,8 @@ def main():
     if args.command == "ingest":
         ingest_documents(
             use_vision=not args.no_vision,
-            reset=args.reset
+            reset=args.reset,
+            force=args.force
         )
         return
 

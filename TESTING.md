@@ -8,13 +8,14 @@ Two levels of automated checks, both runnable from the project root.
 python -m pytest
 ```
 
-64 tests covering:
+76 tests covering:
 
 | Area | What is checked |
 |------|-----------------|
 | Chunker | chunk size limits, overlap, empty input, metadata preservation |
 | Loader | text-quality scoring, TXT loading, multi-page PDF extraction, unsupported types |
 | Edge cases | image-only PDF pages, mixed PDF/TXT folders, empty folders, automatic pruning of deleted files' chunks, re-indexing of edited files, full index reset |
+| Incremental ingest | unchanged files are skipped (no re-embedding), only an edited file is re-embedded, deleted files are pruned via the manifest, an interrupted run resumes from the per-file checkpoint, `--force` re-embeds everything, `--reset` clears the manifest with the index, a corrupt manifest falls back to full re-indexing |
 | Abstention | confidence gate: off-topic and near-topic-but-unsupported questions are refused without calling the LLM; threshold configurable; empty results handled; retrieved-passages display fires only when the gate passes. Note: the gate is a heuristic - margins are measured on the sample notes, not guaranteed on every corpus |
 | Generator | prompt contains context, sources, grounding rules; reply parsing and citation extraction (no Ollama needed) |
 | Pipeline | end-to-end ingest of a generated sample PDF, semantic retrieval ranks the right page first, reranking, empty-store behaviour |

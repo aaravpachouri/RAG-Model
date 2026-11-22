@@ -21,6 +21,8 @@ class VectorStore:
         ephemeral in-memory store (tests).
         """
 
+        self.persist = persist
+
         if persist:
             CHROMA_PATH.mkdir(parents=True, exist_ok=True)
             self.client = chromadb.PersistentClient(
@@ -132,6 +134,23 @@ class VectorStore:
         print(
             f"Stored {len(documents)} chunks."
         )
+
+    def all_ids(self):
+        """Every stored chunk ID."""
+        return self.collection.get(include=[])["ids"]
+
+    def ids_for_source(self, source: str):
+        """Stored chunk IDs belonging to one document."""
+        return self.collection.get(
+            where={"source": source},
+            include=[]
+        )["ids"]
+
+    def delete_ids(self, ids):
+        """Delete specific chunk IDs (no-op on empty input)."""
+        ids = list(ids)
+        if ids:
+            self.collection.delete(ids=ids)
 
     def search(
         self,
